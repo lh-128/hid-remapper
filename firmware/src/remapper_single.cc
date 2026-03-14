@@ -8,6 +8,7 @@
 
 #include "descriptor_parser.h"
 #include "out_report.h"
+#include "quirks.h"
 #include "remapper.h"
 #include "tick.h"
 
@@ -75,6 +76,10 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
     tuh_itf_info_t itf_info;
     tuh_hid_itf_get_info(dev_addr, instance, &itf_info);
     uint8_t itf_num = itf_info.desc.bInterfaceNumber;
+	
+    if (needs_init_quirk(vid, pid, itf_num)) {
+        set_pending_init_quirk(dev_addr, instance, vid, pid);
+    }
 
     descriptor_received_callback(vid, pid, desc_report, desc_len, (uint16_t) (dev_addr << 8) | instance, hub_port, itf_num);
 

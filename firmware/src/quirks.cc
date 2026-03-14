@@ -1,9 +1,17 @@
 #include <cstring>
 
+#ifndef __ZEPHYR__
+#include "bsp/board_api.h"
+#include "host/usbh.h"
+#include "class/hid/hid_host.h"
+#include "tusb.h"
+#endif
+
 #include "constants.h"
 #include "globals.h"
 #include "platform.h"
 #include "quirks.h"
+
 
 const uint16_t VENDOR_ID_ELECOM = 0x056e;
 const uint16_t PRODUCT_ID_ELECOM_M_XT3URBK = 0x00fb;
@@ -24,13 +32,28 @@ const uint16_t VENDOR_ID_CH_PRODUCTS = 0x068e;
 const uint16_t PRODUCT_ID_CH_PRODUCTS_DT225 = 0xf700;
 
 const uint16_t VENDOR_ID_3DCONNEXION = 0x256f;
-const uint16_t VENDOR_ID_LOGITECH = 0x046D;
 const uint16_t PRODUCT_ID_3DCONNEXION_SPACEMOUSE_COMPACT = 0xc635;
 const uint16_t PRODUCT_ID_3DCONNEXION_SPACEMOUSE_PRO = 0xc62b;
 const uint16_t PRODUCT_ID_3DCONNEXION_SPACEPILOT = 0xc625;
 
+const uint16_t VENDOR_ID_LOGITECH = 0x046D;
+const uint16_t PRODUCT_ID_LOGI_G710 = 0xc24d;
+
 const uint16_t VENDOR_ID_GOOGLE = 0x18d1;
 const uint16_t PRODUCT_ID_GOOGLE_STADIA_CONTROLLER = 0x9400;
+
+// Struct to track devices requiring init
+#ifndef __ZEPHYR__
+struct pending_init_t {
+    bool pending;
+    uint32_t mount_time;
+    uint8_t dev_addr;
+    uint16_t vid;
+    uint16_t pid;
+};
+static pending_init_t pending_init_quirks[CFG_TUH_HID] = {};
+#endif
+
 
 const uint8_t elecom_huge_descriptor[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
@@ -1205,3 +1228,49 @@ void apply_quirks(uint16_t vendor_id, uint16_t product_id, std::unordered_map<ui
         }
     }
 }
+
+#ifndef __ZEPHYR__
+bool needs_init_quirk(uint16_t vendor_id, uint16_t product_id, uint8_t itf_num) {
+    if (vendor_id == VENDOR_ID_LOGITECH && product_id == PRODUCT_ID_LOGI_G710 && itf_num == 1) {
+        return true;
+    }
+    return false;
+}
+
+void set_pending_init_quirk(uint8_t dev_addr, uint8_t instance, uint16_t vid, uint16_t pid) {
+    if (instance < CFG_TUH_HID) {
+        pending_init_quirks[instance].pending = true;
+        pending_init_quirks[instance].mount_time = board_millis(); // Record exactly when it mounted
+        pending_init_quirks[instance].dev_addr = dev_addr;
+        pending_init_quirks[instance].vid = vid;
+        pending_init_quirks[instance].pid = pid;
+    }
+}
+
+void process_timer_quirks(uint32_t current_time_ms) {
+    for (uint8_t instance = 0; instance < CFG_TUH_HID; instance++) {
+        
+        if (pending_init_quirks[instance].pending) {
+            
+            // Check if 1s has passed since it was mounted
+            if (current_time_ms - pending_init_quirks[instance].mount_time >= 1000) {
+                
+                uint16_t vid = pending_init_quirks[instance].vid;
+                uint16_t pid = pending_init_quirks[instance].pid;
+                uint8_t dev_addr = pending_init_quirks[instance].dev_addr;
+
+                if (vid == VENDOR_ID_LOGITECH && pid == PRODUCT_ID_LOGI_G710) {
+                    static uint8_t magic_payload[13] = { 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                    bool success = tuh_hid_set_report(dev_addr, instance, 9, HID_REPORT_TYPE_FEATURE, magic_payload, sizeof(magic_payload));
+                    if (success) {
+                        pending_init_quirks[instance].pending = false; 
+                    } else {
+                        // If it fails, add 50ms to the timer and try again on the next loop
+                        pending_init_quirks[instance].mount_time = current_time_ms - 950;
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
