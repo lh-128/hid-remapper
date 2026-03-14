@@ -26,8 +26,10 @@
 #include "mcp4651.h"
 #include "our_descriptor.h"
 #include "platform.h"
+#include "quirks.h"
 #include "remapper.h"
 #include "tick.h"
+#include "hardware/uart.h"
 
 // RP2350 UF2s wipe the last sector of flash every time
 // because of RP2350-E10 errata mitigation. So we put
@@ -255,6 +257,7 @@ int main() {
     extra_init();
     tusb_init();
     stdio_init_all();
+    uart_init(uart0, 115200); 
 
     tud_sof_isr_set(sof_handler);
 
@@ -317,6 +320,7 @@ int main() {
             persist_config_return_code = persist_config();
             need_to_persist_config = false;
         }
+        process_timer_quirks(board_millis());
 
         print_stats_maybe();
 
